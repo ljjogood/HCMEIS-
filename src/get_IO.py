@@ -119,7 +119,7 @@ def IO(herbs_herbs):
 def main():
     file_path_1 = './data/patient_subgroup.json'
 
-    with open('./data/dataset_7d.json', 'r', encoding='utf-8') as f:
+    with open('./data/dataset.json', 'r', encoding='utf-8') as f:
         dataset = json.load(f)
 
     with open(file_path_1, 'r', encoding='utf-8') as f:

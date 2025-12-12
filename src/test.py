@@ -171,10 +171,10 @@ def test():
     """
     print("\n\nModel evaluation.\n")
 
-    with open('./data/dataset_7d.json', 'r', encoding='utf-8') as f:
+    with open('./data/dataset.json', 'r', encoding='utf-8') as f:
         dataset = json.load(f)
 
-    with open('./data/sim_matrix_new.json', 'r', encoding='utf-8') as f:
+    with open('./data/sim_matrix.json', 'r', encoding='utf-8') as f:
         sim_matrix = json.load(f)
 
     model = torch.load('./models/Ai_SGP_Expert.pth',weights_only=False)
