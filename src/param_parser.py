@@ -6,7 +6,7 @@ def parameter_parser():
     """
     A method to parse up command line parameters.
     """
-    parser = argparse.ArgumentParser(description="Run HCMEIS.")
+    parser = argparse.ArgumentParser(description="Run DI-KGSP.")
 
     parser.add_argument("--expert",
                         type=int,
@@ -57,5 +57,10 @@ def parameter_parser():
                         type=float,
                         default=  10 ** -5,
                         help="Adam weight decay. Default is 10^-5.")
+
+    parser.add_argument("--max_nodes",
+                        type=int,
+                        default=100,
+                        help="Number of nodes. Default is 100.")
 
     return parser.parse_args()

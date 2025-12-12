@@ -6,6 +6,8 @@ import numpy as np
 from tqdm import tqdm, trange
 import torch
 from torch_geometric.data import Data, DataLoader, Batch
+from param_parser import parameter_parser
+from train import DIKGSPTrainer
 
 def set_device():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -177,7 +179,12 @@ def test():
     with open('./data/sim_matrix.json', 'r', encoding='utf-8') as f:
         sim_matrix = json.load(f)
 
-    model = torch.load('./models/Ai_SGP_Expert.pth',weights_only=False)
+    args = parameter_parser()
+    trainer = DIKGSPTrainer(args)
+    load_path = './models/DIKGSP_SGP_Expert.pth'
+    trainer.load_model(load_path)
+
+    trainer.model.eval()
 
     random.seed(42)
     random.shuffle(dataset)
@@ -200,7 +207,7 @@ def test():
         target_batch = Batch.from_data_list(train_graphs)
         data = transfer_to_torch((source_batch, target_batch), patient_id, sim_matrix)
         target = data["targets"]
-        prediction, _, _ = model(data)
+        prediction, _, _ = trainer.model(data)
         ground_truth[i] = target.cpu()
         predictions[i] = prediction.cpu().detach().numpy()
 

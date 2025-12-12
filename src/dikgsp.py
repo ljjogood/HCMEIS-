@@ -7,18 +7,24 @@ from model import Base_GNN
 import torch.nn.functional as F
 
 
-class HCMEIS(torch.nn.Module):
+class DIKGSP(torch.nn.Module):
 
     def __init__(self, args, number_of_labels):
         """
         :param args: Arguments object.
         :param number_of_labels: Number of node labels.
         """
-        super(HCMEIS, self).__init__()
+        super(DIKGSP, self).__init__()
 
         self.args = args
         self.number_labels = number_of_labels
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.weight_mse = nn.Parameter(torch.tensor(1.0, device=self.device))  # 默认值1.0
+        self.weight_sup1 = nn.Parameter(torch.tensor(1.0, device=self.device))
+        self.weight_sup2 = nn.Parameter(torch.tensor(1.0, device=self.device))
         self.setup_layers()
+        self.initialize_weights()
+        self.initialize_map()
 
     def setup_layers(self):
         """
@@ -26,11 +32,8 @@ class HCMEIS(torch.nn.Module):
         """
         self.feature_count = self.args.tensor_neurons + self.args.filters_3
         self.convolution_1 = Base_GNN(self.number_labels, self.args.filters_1)
-        self.bn1 = nn.BatchNorm1d(self.args.filters_1)
         self.convolution_2 = Base_GNN(self.args.filters_1, self.args.filters_2)
-        self.bn2 = nn.BatchNorm1d(self.args.filters_2)
         self.convolution_3 = Base_GNN(self.args.filters_2, self.args.filters_3, get_loss=True)
-        self.bn3 = nn.BatchNorm1d(self.args.filters_3)
 
         self.attention = AttentionModule(self.args)
         self.tensor_network = TenorNetworkModule(self.args)
@@ -39,16 +42,29 @@ class HCMEIS(torch.nn.Module):
         self.fully_connected_second = torch.nn.Linear(self.args.tensor_neurons,
                                                       4)
         self.scoring_layer = torch.nn.Linear(4, 1)
-        self.initialize_weights()
+
 
     def initialize_weights(self):
         """
-        Initialize the weights and set experience of different school experts.
+        Initialize the weights.
         """
         nn.init.xavier_normal_(self.fully_connected_first.weight)
         nn.init.xavier_normal_(self.fully_connected_second.weight)
         nn.init.xavier_normal_(self.scoring_layer.weight)
 
+        self.max_possible_nodes = self.args.max_nodes
+        self.dynamic_weight = nn.Parameter(
+            torch.nn.init.xavier_uniform_(
+                torch.empty(self.args.filters_3, self.max_possible_nodes * self.max_possible_nodes, device=self.device))
+        )
+        self.dynamic_bias = nn.Parameter(
+            torch.nn.init.zeros_(torch.empty(self.args.filters_3, device=self.device))
+        )
+
+    def initialize_map(self):
+        """
+        Initialize the map of node labels.
+        """
         if self.args.expert == 0:
             # experience of primary physicians
             self.map_dic = {0: 0.0, 1: 0.120, 2: 0.204, 3: 0.186, 4: 0.244, 5: 0.147, 6: 0.039, 7: 0.057}
@@ -64,6 +80,11 @@ class HCMEIS(torch.nn.Module):
         else:
             sys.stderr.write(f"error")
             sys.exit()
+
+        max_key = max(self.map_dic.keys())
+        self.map_tensor = torch.zeros(max_key + 1, device=self.device)
+        for k, v in self.map_dic.items():
+            self.map_tensor[k] = v
 
     def calculate_node_scores(
             self, abstract_features_1, abstract_features_2, batch_1, batch_2
@@ -102,13 +123,16 @@ class HCMEIS(torch.nn.Module):
 
         scores_emb = torch.matmul(
             abstract_features_1_padded, abstract_features_2_padded.permute([0, 2, 1])
-        ).detach()
+        )
         scores_emb = scores_emb.unsqueeze(1)
         scores_emb = scores_emb.view(scores_emb.size(0), -1)
 
-        linear_layer = nn.Linear(in_features=num_nodes * num_nodes, out_features=self.args.filters_3)
+        in_features = num_nodes * num_nodes
+        weight = self.dynamic_weight[:, :in_features]
+        bias = self.dynamic_bias
 
-        scores_emb = torch.sigmoid(linear_layer(scores_emb))
+        scores_emb = F.linear(scores_emb, weight, bias)
+        scores_emb = torch.sigmoid(scores_emb)
 
         return scores_emb
 
@@ -178,8 +202,8 @@ class HCMEIS(torch.nn.Module):
 
         score1 = self.process_matrix(edge_index_1.tolist(), matrix_1.tolist())
         score2 = self.process_matrix(edge_index_2.tolist(), matrix_2.tolist())
-        node_matrix_1 = torch.tensor(score1).to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
-        node_matrix_2 = torch.tensor(score2).to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+        node_matrix_1 = torch.tensor(score1).to(self.device)
+        node_matrix_2 = torch.tensor(score2).to(self.device)
 
         node_matrix_1 = node_matrix_1.unsqueeze(0).repeat(matrix_1.size(0), 1)
         node_matrix_2 = node_matrix_2.unsqueeze(0).repeat(matrix_2.size(0), 1)
@@ -187,19 +211,13 @@ class HCMEIS(torch.nn.Module):
         node_matrix_1 = torch.cat((matrix_1, node_matrix_1), dim=1)
         node_matrix_2 = torch.cat((matrix_2, node_matrix_2), dim=1)
 
-        # Obtain the maximum key value
-        max_key = max(self.map_dic.keys())
-        map_tensor = torch.zeros(max_key + 1)
-        for k, v in self.map_dic.items():
-            map_tensor[k] = v
-
         # Label-mapping
-        H1_pre = map_tensor[node_matrix_1]
-        H2_pre = map_tensor[node_matrix_2]
+        H1_pre = self.map_tensor[node_matrix_1]
+        H2_pre = self.map_tensor[node_matrix_2]
 
-        batch_1 = data["g1"].batch if hasattr(data["g1"], 'batch') else torch.tensor((), dtype=torch.long).new_zeros(
+        batch_1 = data["g1"].batch if hasattr(data["g1"], 'batch') else torch.tensor((), dtype=torch.long,device=self.device).new_zeros(
             data["g1"].num_nodes)
-        batch_2 = data["g2"].batch if hasattr(data["g2"], 'batch') else torch.tensor((), dtype=torch.long).new_zeros(
+        batch_2 = data["g2"].batch if hasattr(data["g2"], 'batch') else torch.tensor((), dtype=torch.long,device=self.device).new_zeros(
             data["g2"].num_nodes)
 
         # Node-level embeddings

@@ -1,4 +1,5 @@
 import json
+import os
 import random
 import numpy as np
 from matplotlib import pyplot as plt
@@ -9,12 +10,12 @@ from torch_geometric.data import Data, DataLoader, Batch
 import torch.nn.functional as F
 from utils import tab_printer
 from param_parser import parameter_parser
-from hcmeis import HCMEIS
+from dikgsp import DIKGSP
 
 
-class HCMEISTrainer(object):
+class DIKGSPTrainer(object):
     """
-    HCMEIS model trainer.
+    DI-KGSP model trainer.
     """
 
     def __init__(self, args):
@@ -28,9 +29,9 @@ class HCMEISTrainer(object):
 
     def setup_model(self):
         """
-        Introducing the HCMEIS model.
+        Introducing the DI-KGSP model.
         """
-        self.model = HCMEIS(self.args, self.number_of_labels).to(self.device)
+        self.model = DIKGSP(self.args, self.number_of_labels).to(self.device)
 
 
     def initial_dataset(self):
@@ -121,7 +122,7 @@ class HCMEISTrainer(object):
         targets = data["targets"]
         prediction,sup_loss1,sup_loss2 = self.model(data)
         loss1 = torch.nn.functional.mse_loss(prediction, targets, reduction='sum')
-        weight_mse = F.softplus(self.weight_mse)  # 映射后：weight_mse > 0
+        weight_mse = F.softplus(self.weight_mse)
         weight_sup1 = F.softplus(self.weight_sup1)
         weight_sup2 = F.softplus(self.weight_sup2)
         loss = weight_mse*loss1 + weight_sup1*sup_loss1 + weight_sup2* sup_loss2
@@ -135,9 +136,9 @@ class HCMEISTrainer(object):
         """
         print("\nModel training.\n")
         train_set = self.training_graphs
-        self.weight_mse = nn.Parameter(torch.tensor(1.0, device=self.device))
-        self.weight_sup1 = nn.Parameter(torch.tensor(1.0, device=self.device))
-        self.weight_sup2 = nn.Parameter(torch.tensor(1.0, device=self.device))
+        self.weight_mse = self.model.weight_mse
+        self.weight_sup1 = self.model.weight_sup1
+        self.weight_sup2 = self.model.weight_sup2
         all_params = list(self.model.parameters()) + [self.weight_mse, self.weight_sup1, self.weight_sup2]
         self.optimizer = torch.optim.Adam(
             all_params,
@@ -166,28 +167,55 @@ class HCMEISTrainer(object):
         plt.title('model_train')
         plt.show()
 
-
-    def save_model(self):
+    def save_model(self, save_path=None):
         """
         Save the model's parameters.
-        :param count: choose the school of experts.
+        :param save_path: path to save the model.
         """
-        if self.args.expert == 0:
-            torch.save(self.model, f'./models/Ai_Basic_Expert.pth')
-        elif self.args.expert == 1:
-            torch.save(self.model, f'./models/Ai_Middle_Expert.pth')
-        elif self.args.expert == 2:
-            torch.save(self.model, f'./models/Ai_High_Expert.pth')
-        elif self.args.expert == 3:
-            torch.save(self.model, f'./models/Ai_SGP_Expert.pth')
+        if save_path is None:
+            expert_names = {
+                0: "DIKGSP_Basic_Expert",
+                1: "DIKGSP_Middle_Expert",
+                2: "DIKGSP_High_Expert",
+                3: "DIKGSP_SGP_Expert"
+            }
+            model_name = expert_names.get(self.args.expert, "DIKGSP_Default_Expert")
+            save_path = f'./models/{model_name}.pth'
+
+        save_dir = os.path.dirname(save_path)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir, exist_ok=True)
+
+        checkpoint = {
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'args': self.args
+        }
+
+        torch.save(checkpoint, save_path)
+        print(f"\n✅ Model is saved in：{save_path}")
+
+    def load_model(self, load_path):
+        """
+        Load training state
+        :param load_path: Path to the saved model file
+        """
+        if not os.path.exists(load_path):
+            raise FileNotFoundError(f"❌ can't find the model file：{load_path}")
+
+        checkpoint = torch.load(load_path, map_location=self.device,weights_only=False)
+
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        print(f"✅ already loaded the model params：{load_path}")
+
 
 def main():
     """
-    Fitting a HCMEIS model.
+    Fitting a DI-KGSP model.
     """
     args = parameter_parser()
     tab_printer(args)
-    trainer = HCMEISTrainer(args)
+    trainer = DIKGSPTrainer(args)
     trainer.fit()
     trainer.save_model()
 

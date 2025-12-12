@@ -4,6 +4,8 @@ from py2neo import Graph
 import numpy as np
 import torch
 from torch_geometric.data import Data, Batch
+from param_parser import parameter_parser
+from train import DIKGSPTrainer
 
 graph = Graph("address", auth=("UserName","PassWord"), name='Neo4j')
 
@@ -125,12 +127,17 @@ def main():
     with open(file_path_1, 'r', encoding='utf-8') as f:
         subgraphs = json.load(f)
 
-    model = torch.load('./models/Ai_SGP_Expert.pth',weights_only=False)
+    args = parameter_parser()
+    trainer = DIKGSPTrainer(args)
+    load_path = './models/DIKGSP_SGP_Expert.pth'
+    trainer.load_model(load_path)
+
+    trainer.model.eval()
 
     herbs_herbs = []
     for patient in subgraphs:
         patientID = patient['patient_id']
-        similar_instances = patient_retrival(model=model, inquiry_patient=patient,inquiry_patientID = patientID, dataset=dataset)
+        similar_instances = patient_retrival(model=trainer.model, inquiry_patient=patient,inquiry_patientID = patientID, dataset=dataset)
         patients, numbers, herbs,herbs_physician = similar_instances.prescription()
         physician_herbs_dose = herbs_physician
         re_herbs_dose = herbs

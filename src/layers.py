@@ -4,7 +4,7 @@ import torch
 
 class AttentionModule(torch.nn.Module):
     """
-    HCMEIS Attention Module to get the graph-level embeddings.
+    DI-KGSP Attention Module to get the graph-level embeddings.
     """
     def __init__(self, args):
         """
@@ -47,7 +47,7 @@ class AttentionModule(torch.nn.Module):
 
 class TenorNetworkModule(torch.nn.Module):
     """
-    HCMEIS Tensor Network module to calculate similarity vector.
+    DI-KGSP Tensor Network module to calculate similarity vector.
     """
     def __init__(self, args):
         """
